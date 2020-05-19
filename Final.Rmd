@@ -1,0 +1,169 @@
+---
+title: "Final"
+output: html_notebook
+---
+
+### Intro
+I would like to investigate if there is a way to predict a movie's rating based on several attributes about the movie.  To do this I am going to use data about IMDb's 1000 top ranked movies.
+
+We could scrape all the data from IMDB's website, however, we can download a table with some of the data we want [here](https://www.imdb.com/list/ls053900011/?sort=list_order,asc&st_dt=&mode=detail&page=1&ref_=ttls_vm_dtl), and can supplement that data with two other sets from Kaggle [here](https://www.kaggle.com/pkabir/imdb-movie-ratings/data#) [and here](https://www.kaggle.com/stefanoleone992/imdb-extensive-dataset?select=IMDb+movies.csv).  This is the preferred option for me so I will download all three of those in Comma-Separated-Value (CSV) format.
+
+### Tidying Data
+
+#### Loading Data
+In order to manipulate this data in R, we will use the command read_csv() to first load it into an R dataframe.
+```{r, eval=TRUE}
+library(tidyverse)
+
+from_website <- read_csv("~/downloads/Imdb top 1000 list.csv")
+head(from_website)
+with_ratings <- read_csv("~/downloads/imdb_1000.csv")
+head(with_ratings)
+with_budget <- read_csv("~/downloads/IMDB movies.csv")
+head(with_budget)
+
+```
+
+
+#### Cleaning Data
+Now that we have all of our tables, we can start cleaning up the data to make it easier to manipulate and more relevant for our purposes.
+
+Starting with the table from IMDB's website.  We can eliminate the columns Position, Created and Modified (they're relevant to the postings, not the movies), Description (it's empty), URL (it's unnecessary for our purposes), Title Type (they're all movies), Year (the year is included in release date), and Number of Votes (while it might be a good statistic for estimating purposes, we don't have the number of people who participated in total).  I chose to specify the columns using their indices but you can use their names as well. We will also format 'Release Date' as a date object.
+```{r, eval=TRUE}
+library (lubridate)
+
+from_website <- from_website %>% select(2,6,9,10,14,15)
+from_website$`Release Date` <- as_date(from_website$`Release Date`)
+head(from_website)
+```
+
+
+For the table with ratings, we only want the content ratings, genre, and title (which we'll use to join the tables soon).
+```{r, eval=TRUE}
+with_ratings <- with_ratings %>% select(2,3,4)
+head(with_ratings)
+```
+
+
+And for the table with the budget we want the ID (again used for merging the tables), writer, production company, and budget.  This table requires a little extra clean up.
+```{r, eval=TRUE}
+with_budget <- with_budget %>% select(1,11,12,17)
+head(with_budget)
+```
+
+
+#### Creating the Master Table
+
+Now that we have all the attributes we want across 3 tables, we can combine them into one table using a join function.  We want only data on the movies from IMDB's table, so we will use a left join.
+```{r, eval=TRUE}
+master_tab <- from_website %>% left_join(with_ratings, by=c("Title" = "title"))
+master_tab <- master_tab %>% left_join(with_budget, by=c("Const" = "imdb_title_id"))
+head(master_tab)
+```
+
+### Attributes
+Const - this is IMDb's id for the movie (character)
+Title - the title of the movie (character)
+IMDb Rating - the rating of the movie on a scale of 0 to 10 stars (numeric)
+Runtime - the runtime of the movie in minutes (numeric)
+Release Date - the date the movie was released (yyyy-mm-dd) (datetime)
+Directors - the movie's director(s) (character)
+Content Rating - the rating as decided by the Motion Picture Association of America concerning suitability of the film's content (character)
+Genre - the genre of the movie according to IMDb (character)
+Writer - the writer of the movie (character)
+Production Company - the company that produced the movie (character)
+Budget - the production budget for the movie (character)
+Season (to be added) - the season during which the movie was released (character)
+
+### Exploratory Data Analysis
+
+Now that we have our data, we can create visuals to better see the spread and trends in our data.  We will mainly utilize ggplot to create these visuals.
+
+### Runtime
+
+We will make a scatter plot of runtime vs rating.
+```{r, eval=TRUE}
+master_tab %>% ggplot(aes(x=master_tab$`Runtime (mins)`, y=master_tab$`IMDb Rating`)) + geom_point() + labs(x="runtime (mins)", y="IMDb Rating")
+```
+
+There may be a trend between these two that we will further investigate later.
+
+### Season
+
+We want to look at the relationship between release date and rating, so we can start by categorizing the release dates into seasons.  We will add a new atrribute to our table for this value.
+```{r, eval=TRUE}
+get_season <- function(date) {
+  m <- month(date)
+  if (m == 12 || m == 1 | m == 2)
+    "Winter"
+  else if (m >= 3 && m <= 5)
+    "Spring"
+  else if (m >= 6 && m <= 8)
+    "Summer"
+  else 
+    "Fall"
+}
+
+master_tab <- master_tab %>% mutate(season = sapply(master_tab$`Release Date`, get_season))
+head(master_tab)
+```
+
+Then we will create boxplots for ratings conditioned on season.
+```{r, eval=TRUE}
+master_tab %>% ggplot(aes(x=master_tab$season, y=master_tab$`IMDb Rating`)) + geom_boxplot() + labs(x="season", y="IMDb Rating")
+```
+
+These plots all seem centered around the same rating and have similar distributions, although summer does seem to have a lower minimum than the other 3 seasons.
+
+### Content Rating
+
+We will also create boxplots to visualize the distribution of the content ratings vs movie ratings.
+```{r, eval=TRUE}
+master_tab %>% ggplot(aes(x=master_tab$content_rating.x, y=master_tab$`IMDb Rating`)) + geom_boxplot() + labs(x="Content Rating", y="IMDb Rating")
+```
+
+These ratings seem pretty evenly distributed across content rating, with no one content rating seeming to have significantly higher or lower means than any other.
+
+### Genre
+
+We will make one more boxplot for ratings conditioned on genre.
+```{r, eval=TRUE}
+master_tab %>% ggplot(aes(x=master_tab$genre.y, y=master_tab$`IMDb Rating`)) + geom_boxplot() + labs(x="Genre", y="IMDb Rating")
+```
+
+Much like content rating, no one genre seems to have done much better or worse than the others in terms of ratings.
+
+### Budget
+
+We will also make a histogram to visualize the relationship between budget and rating.  We can only compare the budgets of the same currency so we will filter the table for budgets in US dollars (the majority of the movies) and then create a histogram of those budgets.
+```{r, eval=TRUE}
+master_tab %>% filter(substring(master_tab$budget, 0, 1) == "$") %>% mutate(numeric_budget = substr(budget, 2, 100)) %>% mutate(numeric_budget = as.numeric(numeric_budget)) %>% ggplot(aes(x=numeric_budget, y=`IMDb Rating`)) + geom_point() + labs(x="Budget", y="IMDb Rating")
+```
+
+There seems to be an interesting trend of fewer extreme ratings as budget increases.  We can investigate this futher later.
+
+### Linear Regression 
+
+Now that we've visualize the relationships between ratings and our other attributes, we can try to find a mathematical relationship between them. The two most interesting categories seemed to be run time and budget, so we will create our regression with those.
+```{r, eval=TRUE}
+library(ISLR)
+library(broom)
+
+fit_tab <- master_tab %>% filter(substring(master_tab$budget, 0, 1) == "$") %>% mutate(numeric_budget = substr(budget, 2, 100)) %>% mutate(numeric_budget = as.numeric(numeric_budget))
+fit <- lm(fit_tab$`IMDb Rating`~1+fit_tab$numeric_budget+fit_tab$`Runtime (mins)`, data=fit_tab)
+fit %>% tidy() %>% knitr::kable()
+```
+
+### Conclusions
+Our p-values calculated from our linear regression are both less than .05, so we reject that those attributes have any influence on ratings.  This means that we cannot make a correlation between runtime or budget in the rating of a movie.
+
+### Resources
+We used several libraries during our exploration.  There are many more applications of these libraries than just the ones we used today, so below are links to more information about each of the libraries for further information.
+
+[tidyverse](https://www.tidyverse.org)
+[ggplot](https://ggplot2.tidyverse.org) is part of tidyverse, but here is more information specifically about ggplot 
+[lubridate](https://lubridate.tidyverse.org) also a part of tidyverse
+[ISLR](https://cran.r-project.org/web/packages/ISLR/ISLR.pdf) 
+[broom](https://cran.r-project.org/web/packages/broom/vignettes/broom.html)
+
+[Kaggle](https://www.kaggle.com) is a great source for free datasets on a variety of topics
